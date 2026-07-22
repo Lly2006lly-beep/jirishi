@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#FBF7F0">
+    <title>{% block title %}今日事{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="nav">
+        <div class="nav-inner">
+            <a href="{{ url_for('index') }}" class="nav-brand">📋 今日事</a>
+            <div class="nav-links">
+                {% if current_user.is_authenticated %}
+                    <span class="nav-user">{{ current_user.username }}</span>
+                    <a href="{{ url_for('index') }}">首页</a>
+                    <a href="{{ url_for('categories_page') }}">分类</a>
+                    <a href="{{ url_for('history_page') }}">历史</a>
+                    <a href="{{ url_for('summary_page') }}">小结</a>
+                    <a href="{{ url_for('settings_page') }}">设置</a>
+                    <a href="{{ url_for('logout') }}">退出</a>
+                {% endif %}
+            </div>
+            <!-- 移动端菜单按钮 -->
+            <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('show')" aria-label="菜单">
+                ☰
+            </button>
+        </div>
+    </nav>
+
+    <!-- Flash 消息 -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-container">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">
+            {{ message }}
+            <button class="flash-close" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <!-- 主内容 -->
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <p>今日事 &mdash; 记录每一天</p>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

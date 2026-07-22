@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}设置 - 今日事{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>⚙️ 设置</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline">← 返回首页</a>
+</div>
+
+<div class="card">
+    <form method="POST" action="{{ url_for('settings_page') }}">
+        <div class="form-group">
+            <label for="remind_days">默认提前提醒天数</label>
+            <p class="form-hint">设置后，新增的待办将默认提前这些天数提醒。设为 0 则不提醒。</p>
+            <input type="number" id="remind_days" name="remind_days"
+                   value="{{ remind_days }}" min="0" max="30"
+                   style="max-width:150px">
+        </div>
+        <button type="submit" class="btn btn-primary">保存设置</button>
+    </form>
+</div>
+
+<div class="card" style="margin-top: 16px;">
+    <h3>ℹ️ 关于</h3>
+    <p style="color:#8B7355; line-height:1.8">
+        <strong>今日事</strong> — 记录每一天<br>
+        一个简约文艺的待办管理工具。<br>
+        支持多用户、移动端适配、提醒和每日小结。
+    </p>
+</div>
+{% endblock %}

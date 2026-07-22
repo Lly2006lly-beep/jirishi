@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}提醒详情 - 今日事{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>⏰ 即将到期的待办</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline">← 返回首页</a>
+</div>
+
+{% if reminders %}
+<div class="card-list">
+    {% for r in reminders %}
+    <div class="card reminder-card">
+        <div class="card-body">
+            <div class="card-title">{{ r.content }}</div>
+            <div class="card-meta">
+                <span class="tag tag-due">📅 截止：{{ r.due_date }}</span>
+                {% if r.days_left == 0 %}
+                <span class="tag tag-overdue">⚠️ 今天到期</span>
+                {% elif r.days_left == 1 %}
+                <span class="tag tag-overdue">⚠️ 明天到期</span>
+                {% elif r.days_left > 0 %}
+                <span class="tag tag-warning">还有 {{ r.days_left }} 天</span>
+                {% else %}
+                <span class="tag tag-overdue">已过期 {{ -r.days_left }} 天</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<form method="POST" action="{{ url_for('reminders_dismiss') }}" style="text-align:center; margin-top: 20px;">
+    {% for r in reminders %}
+    <input type="hidden" name="ids" value="{{ r.id }}">
+    {% endfor %}
+    <button type="submit" class="btn btn-primary">知道了，关闭提醒</button>
+</form>
+{% else %}
+<div class="empty-state">
+    <p class="empty-icon">🎉</p>
+    <p>没有即将到期的待办</p>
+</div>
+{% endif %}
+{% endblock %}

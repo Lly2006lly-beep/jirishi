@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}每日小结 - 今日事{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📊 每日小结</h1>
+    <div class="page-header-actions">
+        <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline">← 返回首页</a>
+        {% if summary %}
+        <a href="{{ url_for('summary_download') }}" class="btn btn-sm btn-primary">⬇ 下载 .md</a>
+        {% endif %}
+    </div>
+</div>
+
+{% if summary %}
+<!-- 本周统计 -->
+<div class="weekly-stats">
+    <h3>📈 本周完成统计</h3>
+    <div class="weekly-bars">
+        {% for day in weekly %}
+        <div class="weekly-bar-item">
+            <div class="weekly-bar-label">{{ day.weekday }}</div>
+            <div class="weekly-bar-wrapper">
+                <div class="weekly-bar-fill" style="height: {{ (day.count / (weekly|map(attribute='count')|max or 1)) * 100 if weekly|map(attribute='count')|max > 0 else 0 }}%">
+                    {% if day.count > 0 %}{{ day.count }}{% endif %}
+                </div>
+            </div>
+            <div class="weekly-bar-date">{{ day.date[-5:] }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Markdown 预览 -->
+<div class="card">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center">
+        <h3>📝 小结预览</h3>
+        <button class="btn btn-sm btn-outline" onclick="copySummary()">📋 复制</button>
+    </div>
+    <div class="markdown-preview" id="summaryContent">
+        <pre>{{ summary.markdown }}</pre>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <p class="empty-icon">☕️</p>
+    <p>今天还没有完成任何工作</p>
+    <p class="empty-hint">完成一些任务后再来看小结吧</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if summary %}
+<script>
+function copySummary() {
+    var content = document.getElementById('summaryContent').innerText;
+    navigator.clipboard.writeText(content).then(function() {
+        var btn = event.target;
+        btn.textContent = '✅ 已复制';
+        setTimeout(function() { btn.textContent = '📋 复制'; }, 2000);
+    }).catch(function() {
+        // 降级方案
+        var textarea = document.createElement('textarea');
+        textarea.value = content;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        var btn = event.target;
+        btn.textContent = '✅ 已复制';
+        setTimeout(function() { btn.textContent = '📋 复制'; }, 2000);
+    });
+}
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}分类管理 - 今日事{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📂 分类管理</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline">← 返回首页</a>
+</div>
+
+<div class="card">
+    <form method="POST" action="{{ url_for('category_add') }}" class="inline-form">
+        <div class="form-group" style="flex:1">
+            <input type="text" name="name" placeholder="输入新分类名称" required
+                   style="width:100%">
+        </div>
+        <button type="submit" class="btn btn-primary">添加分类</button>
+    </form>
+</div>
+
+{% if categories %}
+<div class="card-list">
+    {% for cat in categories %}
+    <div class="card category-card">
+        <div class="card-body" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <span class="card-title">{{ cat }}</span>
+            <div class="card-actions">
+                <form method="POST" action="{{ url_for('category_rename') }}" class="inline-form" style="margin:0">
+                    <input type="hidden" name="old_name" value="{{ cat }}">
+                    <input type="text" name="new_name" placeholder="新名称" required style="min-width:100px">
+                    <button type="submit" class="btn btn-sm btn-outline">重命名</button>
+                </form>
+                <form method="POST" action="{{ url_for('category_delete') }}" style="display:inline"
+                      onsubmit="return confirm('确定要删除分类「{{ cat }}」吗？相关任务将取消分类。')">
+                    <input type="hidden" name="name" value="{{ cat }}">
+                    <button class="btn btn-sm btn-danger">删除</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>暂无分类</p>
+</div>
+{% endif %}
+{% endblock %}

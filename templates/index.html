@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}首页 - 今日事{% endblock %}
+
+{% block content %}
+<!-- 提醒横幅 -->
+{% if reminders %}
+<div class="reminder-banner">
+    <div class="reminder-content">
+        <span class="reminder-icon">⏰</span>
+        <span class="reminder-text">
+            你有 <strong>{{ reminders|length }}</strong> 个待办即将到期，
+            <a href="{{ url_for('reminders_page') }}">点击查看详情</a>
+        </span>
+    </div>
+    <form method="POST" action="{{ url_for('reminders_dismiss') }}" style="display:inline">
+        {% for r in reminders %}
+        <input type="hidden" name="ids" value="{{ r.id }}">
+        {% endfor %}
+        <button type="submit" class="reminder-dismiss" title="关闭提醒">&times;</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="home-layout">
+    <!-- 左侧：待办事项 -->
+    <section class="panel panel-todo">
+        <div class="panel-header">
+            <h2>📝 待办事项 <span class="badge">{{ stats.todo }}</span></h2>
+            <button class="btn btn-sm btn-outline" onclick="toggleModal('addTodoModal')">+ 添加</button>
+        </div>
+
+        <!-- 筛选栏 -->
+        <div class="filter-bar">
+            <form method="GET" action="{{ url_for('index') }}" class="filter-form">
+                {% if current_category %}
+                <input type="hidden" name="category" value="{{ current_category }}">
+                {% endif %}
+                <select name="tag" class="filter-select" onchange="this.form.submit()">
+                    <option value="">全部标签</option>
+                    {% for tag in tags %}
+                    <option value="{{ tag }}" {% if current_tag == tag %}selected{% endif %}>{{ tag }}</option>
+                    {% endfor %}
+                </select>
+                <select name="category" class="filter-select" onchange="this.form.submit()">
+                    <option value="">全部分类</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if current_category == cat %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+
+        <!-- 待办列表 -->
+        {% if todos %}
+        <form id="todoBatchForm" method="POST" action="{{ url_for('todo_batch_done') }}">
+            <div class="todo-list">
+                {% for todo in todos %}
+                <div class="todo-item priority-{{ todo.priority }}">
+                    <label class="todo-checkbox">
+                        <input type="checkbox" name="ids" value="{{ todo.id }}" class="batch-check">
+                    </label>
+                    <div class="todo-body">
+                        <div class="todo-content">{{ todo.content }}</div>
+                        <div class="todo-meta">
+                            {% if todo.category %}
+                            <span class="tag tag-category">{{ todo.category }}</span>
+                            {% endif %}
+                            {% if todo.tags %}
+                                {% for t in todo.tags.split(',') %}
+                                <span class="tag tag-normal">{{ t.strip() }}</span>
+                                {% endfor %}
+                            {% endif %}
+                            {% if todo.due_date %}
+                            <span class="tag tag-due {% if todo.due_date < today_str %}tag-overdue{% endif %}">
+                                📅 {{ todo.due_date }}
+                            </span>
+                            {% endif %}
+                            <span class="tag tag-priority">
+                                {% if todo.priority == 1 %}🔴 高
+                                {% elif todo.priority == 2 %}🟡 中
+                                {% else %}🟢 低
+                                {% endif %}
+                            </span>
+                            {% if todo.notes %}
+                            <span class="tag tag-notes" title="{{ todo.notes }}">📝 有备注</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="todo-actions">
+                        <form method="POST" action="{{ url_for('todo_mark_done', todo_id=todo.id) }}" style="display:inline">
+                            <button class="btn btn-sm btn-success" title="标记完成">✔</button>
+                        </form>
+                        <button class="btn btn-sm btn-outline"
+                                onclick="openEditModal({{ todo.id }}, '{{ todo.content|e }}', '{{ todo.due_date or '' }}', {{ todo.priority }}, '{{ todo.remind_days or '' }}', '{{ todo.notes or ''|e }}', '{{ todo.tags or ''|e }}', '{{ todo.category or '' }}')"
+                                title="编辑">✏️</button>
+                        <form method="POST" action="{{ url_for('todo_delete', todo_id=todo.id) }}" style="display:inline"
+                              onsubmit="return confirm('确定要删除这条待办吗？')">
+                            <button class="btn btn-sm btn-danger" title="删除">✕</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- 批量操作栏 -->
+            <div class="batch-bar">
+                <button type="button" class="btn btn-sm btn-outline" onclick="toggleAll('.batch-check')">全选/取消</button>
+                <button type="submit" class="btn btn-sm btn-success"
+                        formaction="{{ url_for('todo_batch_done') }}"
+                        onclick="return confirm('确定要批量标记为完成吗？')">✔ 批量完成</button>
+                <button type="submit" class="btn btn-sm btn-danger"
+                        formaction="{{ url_for('todo_batch_delete') }}"
+                        onclick="return confirm('确定要批量删除吗？')">✕ 批量删除</button>
+            </div>
+        </form>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-icon">📭</p>
+            <p>暂无待办事项</p>
+            <p class="empty-hint">点击上方「+ 添加」开始吧</p>
+        </div>
+        {% endif %}
+    </section>
+
+    <!-- 右侧：今日完成 -->
+    <section class="panel panel-done">
+        <div class="panel-header">
+            <h2>✅ 今日完成 <span class="badge badge-done">{{ stats.done }}</span></h2>
+        </div>
+
+        {% if done_items %}
+        <div class="done-list">
+            {% for done in done_items %}
+            <div class="done-item">
+                <span class="done-check">✓</span>
+                <div class="done-body">
+                    <div class="done-content">{{ done.content }}</div>
+                    <div class="done-meta">
+                        {% if done.category %}
+                        <span class="tag tag-category">{{ done.category }}</span>
+                        {% endif %}
+                        {% if done.tags %}
+                            {% for t in done.tags.split(',') %}
+                            <span class="tag tag-normal">{{ t.strip() }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="done-actions">
+                    <form method="POST" action="{{ url_for('done_revert', done_id=done.id) }}" style="display:inline">
+                        <button class="btn btn-sm btn-outline" title="改回待办">↩</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('done_delete', done_id=done.id) }}" style="display:inline"
+                          onsubmit="return confirm('确定要删除这条记录吗？')">
+                        <button class="btn btn-sm btn-danger" title="删除">✕</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="done-footer">
+            <button class="btn btn-sm btn-outline" onclick="toggleModal('addDoneModal')">+ 记录工作</button>
+            <form method="POST" action="{{ url_for('done_clear') }}" style="display:inline"
+                  onsubmit="return confirm('确定要清空今日所有完成记录吗？此操作不可恢复。')">
+                <button class="btn btn-sm btn-danger">清空今日</button>
+            </form>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-icon">☕️</p>
+            <p>今天还没有完成记录</p>
+            <p class="empty-hint">完成待办或手动记录吧</p>
+            <button class="btn btn-sm btn-outline" onclick="toggleModal('addDoneModal')" style="margin-top:12px">+ 记录工作</button>
+        </div>
+        {% endif %}
+    </section>
+</div>
+
+<!-- ==================== 添加待办弹窗 ==================== -->
+<div id="addTodoModal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="toggleModal('addTodoModal')"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>✍️ 添加待办</h3>
+            <button class="modal-close" onclick="toggleModal('addTodoModal')">&times;</button>
+        </div>
+        <form method="POST" action="{{ url_for('todo_add') }}">
+            <div class="form-group">
+                <label for="todoContent">待办内容 *</label>
+                <input type="text" id="todoContent" name="content"
+                       placeholder="请输入待办内容" required autofocus>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-half">
+                    <label for="todoDueDate">截止日期</label>
+                    <input type="date" id="todoDueDate" name="due_date">
+                </div>
+                <div class="form-group form-half">
+                    <label for="todoPriority">优先级</label>
+                    <select id="todoPriority" name="priority">
+                        <option value="1">🔴 高</option>
+                        <option value="2" selected>🟡 中</option>
+                        <option value="3">🟢 低</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-half">
+                    <label for="todoCategory">分类</label>
+                    <select id="todoCategory" name="category">
+                        <option value="">无分类</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group form-half">
+                    <label for="todoRemind">提前提醒（天）</label>
+                    <input type="number" id="todoRemind" name="remind_days"
+                           min="0" value="{{ default_remind_days }}" placeholder="0=不提醒">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="todoTags">标签（用逗号分隔）</label>
+                <input type="text" id="todoTags" name="tags" placeholder="例如：重要,紧急">
+            </div>
+            <div class="form-group">
+                <label for="todoNotes">备注</label>
+                <textarea id="todoNotes" name="notes" rows="2" placeholder="可选备注"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full">添加待办</button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== 编辑待办弹窗 ==================== -->
+<div id="editTodoModal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="toggleModal('editTodoModal')"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>✏️ 编辑待办</h3>
+            <button class="modal-close" onclick="toggleModal('editTodoModal')">&times;</button>
+        </div>
+        <form id="editTodoForm" method="POST" action="">
+            <div class="form-group">
+                <label for="editContent">待办内容 *</label>
+                <input type="text" id="editContent" name="content" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-half">
+                    <label for="editDueDate">截止日期</label>
+                    <input type="date" id="editDueDate" name="due_date">
+                </div>
+                <div class="form-group form-half">
+                    <label for="editPriority">优先级</label>
+                    <select id="editPriority" name="priority">
+                        <option value="1">🔴 高</option>
+                        <option value="2" selected>🟡 中</option>
+                        <option value="3">🟢 低</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-half">
+                    <label for="editCategory">分类</label>
+                    <select id="editCategory" name="category">
+                        <option value="">无分类</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group form-half">
+                    <label for="editRemind">提前提醒（天）</label>
+                    <input type="number" id="editRemind" name="remind_days" min="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="editTags">标签（用逗号分隔）</label>
+                <input type="text" id="editTags" name="tags" placeholder="例如：重要,紧急">
+            </div>
+            <div class="form-group">
+                <label for="editNotes">备注</label>
+                <textarea id="editNotes" name="notes" rows="2" placeholder="可选备注"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full">保存修改</button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== 添加工作记录弹窗 ==================== -->
+<div id="addDoneModal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="toggleModal('addDoneModal')"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>📝 记录完成的工作</h3>
+            <button class="modal-close" onclick="toggleModal('addDoneModal')">&times;</button>
+        </div>
+        <form method="POST" action="{{ url_for('done_add') }}">
+            <div class="form-group">
+                <label for="doneContent">工作内容 *</label>
+                <input type="text" id="doneContent" name="content"
+                       placeholder="请输入完成的工作内容" required autofocus>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full">记录</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ==================== 弹窗控制 ====================
+function toggleModal(id) {
+    var modal = document.getElementById(id);
+    modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
+}
+
+// 点击遮罩关闭弹窗
+document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('modal-overlay')) {
+        e.target.parentElement.style.display = 'none';
+    }
+});
+
+// ==================== 编辑待办弹窗 ====================
+function openEditModal(id, content, dueDate, priority, remindDays, notes, tags, category) {
+    document.getElementById('editTodoForm').action = '/todo/' + id + '/edit';
+    document.getElementById('editContent').value = content;
+    document.getElementById('editDueDate').value = dueDate;
+    document.getElementById('editPriority').value = priority;
+    document.getElementById('editRemind').value = remindDays;
+    document.getElementById('editNotes').value = notes || '';
+    document.getElementById('editTags').value = tags || '';
+    document.getElementById('editCategory').value = category || '';
+    toggleModal('editTodoModal');
+}
+
+// ==================== 全选/取消全选 ====================
+function toggleAll(selector) {
+    var checks = document.querySelectorAll(selector);
+    var allChecked = Array.from(checks).every(function(c) { return c.checked; });
+    checks.forEach(function(c) { c.checked = !allChecked; });
+}
+
+// ==================== Flash 消息自动消失 ====================
+setTimeout(function() {
+    var flashes = document.querySelectorAll('.flash');
+    flashes.forEach(function(f) {
+        f.style.opacity = '0';
+        f.style.transition = 'opacity 0.5s';
+        setTimeout(function() { f.remove(); }, 500);
+    });
+}, 3000);
+
+// ==================== 移动端导航 ====================
+document.addEventListener('click', function(e) {
+    var navLinks = document.querySelector('.nav-links');
+    var toggle = document.querySelector('.nav-toggle');
+    if (navLinks.classList.contains('show') &&
+        !navLinks.contains(e.target) &&
+        !toggle.contains(e.target)) {
+        navLinks.classList.remove('show');
+    }
+});
+</script>
+{% endblock %}

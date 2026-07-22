@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}历史记录 - 今日事{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📚 历史完成记录</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline">← 返回首页</a>
+</div>
+
+{% if items %}
+<div class="card-list">
+    {% for item in items %}
+    <div class="card history-card">
+        <div class="card-body">
+            <div class="card-title">{{ item.content }}</div>
+            <div class="card-meta">
+                <span class="tag tag-normal">📅 {{ item.created_date }}</span>
+                {% if item.category %}
+                <span class="tag tag-category">{{ item.category }}</span>
+                {% endif %}
+                {% if item.tags %}
+                    {% for t in item.tags.split(',') %}
+                    <span class="tag tag-normal">{{ t.strip() }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p class="empty-icon">📭</p>
+    <p>暂无历史记录</p>
+</div>
+{% endif %}
+{% endblock %}
