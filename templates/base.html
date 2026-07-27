@@ -19,8 +19,73 @@
             navigator.serviceWorker.register('{{ url_for('static', filename='sw.js') }}');
         }
     </script>
+    <style>
+        /* PWA 安装提示条 */
+        .install-banner {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 9999;
+            background: linear-gradient(135deg, #FFA550, #FF8C35);
+            color: #fff;
+            padding: 12px 16px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            box-shadow: 0 2px 12px rgba(255,140,53,0.3);
+            animation: slideDown 0.3s ease;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-100%); }
+            to { transform: translateY(0); }
+        }
+        .install-banner .ib-text {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .install-banner .ib-icon {
+            font-size: 24px;
+        }
+        .install-banner .ib-btn {
+            background: #fff;
+            color: #FF8C35;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 16px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .install-banner .ib-close {
+            background: none;
+            border: none;
+            color: rgba(255,255,255,0.7);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 2px 6px;
+        }
+        .install-banner.ios-banner .ib-btn {
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
+    </style>
 </head>
 <body>
+    <!-- PWA 安装引导条 -->
+    <div class="install-banner" id="installBanner">
+        <span class="ib-text">
+            <span class="ib-icon">📋</span>
+            <span id="installText">添加到桌面，像 App 一样使用</span>
+        </span>
+        <button class="ib-btn" id="installBtn">立即添加</button>
+        <button class="ib-close" id="installDismiss">&times;</button>
+    </div>
+
     <!-- 导航栏 -->
     <nav class="nav">
         <div class="nav-inner">
@@ -67,6 +132,68 @@
         <p>今日事 &mdash; 记录每一天</p>
     </footer>
 
+    <script>
+        (function() {
+            var banner = document.getElementById('installBanner');
+            var installBtn = document.getElementById('installBtn');
+            var installText = document.getElementById('installText');
+            var dismissBtn = document.getElementById('installDismiss');
+            var deferredPrompt = null;
+
+            // 检测是否已安装
+            if (window.matchMedia('(display-mode: standalone)').matches || 
+                navigator.standalone) {
+                banner.style.display = 'none';
+                return;
+            }
+
+            // 检测 iOS
+            var isIOS = /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase());
+            
+            if (isIOS) {
+                // iOS: 显示手动添加引导（不支持 beforeinstallprompt）
+                banner.style.display = 'flex';
+                banner.classList.add('ios-banner');
+                installText.textContent = '点击分享按钮 → 添加到主屏幕';
+                installBtn.textContent = '知道了';
+                installBtn.onclick = function() { banner.style.display = 'none'; };
+                if (localStorage.getItem('pwa-dismissed')) banner.style.display = 'none';
+            }
+
+            // Android/Desktop: 监听 beforeinstallprompt
+            window.addEventListener('beforeinstallprompt', function(e) {
+                e.preventDefault();
+                deferredPrompt = e;
+                if (!localStorage.getItem('pwa-dismissed')) {
+                    banner.style.display = 'flex';
+                }
+            });
+
+            // 点击安装
+            installBtn.addEventListener('click', function() {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then(function(result) {
+                        banner.style.display = 'none';
+                        deferredPrompt = null;
+                    });
+                } else if (isIOS) {
+                    banner.style.display = 'none';
+                }
+            });
+
+            // 关闭
+            dismissBtn.addEventListener('click', function() {
+                banner.style.display = 'none';
+                localStorage.setItem('pwa-dismissed', '1');
+            });
+
+            // 已安装后隐藏
+            window.addEventListener('appinstalled', function() {
+                banner.style.display = 'none';
+            });
+        })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
