@@ -672,3 +672,192 @@ def mark_reminded(user_id, task_ids):
                  (today, tid, user_id))
     conn.commit()
     conn.close()
+
+
+# ==================== 数据迁移 ====================
+
+def migrate_to_supabase(supabase_url):
+    """
+    将当前数据库中的所有数据迁移到 Supabase PostgreSQL。
+    返回 {'success': bool, 'report': str, 'details': dict}
+    """
+    if not HAS_PSYCOPG2:
+        return {'success': False, 'report': '未安装 psycopg2，无法连接 PostgreSQL', 'details': {}}
+
+    old_conn = get_db()
+    old_type = _db_type
+    old_cursor = old_conn.cursor()
+
+    new_conn = psycopg2.connect(supabase_url)
+    new_cursor = new_conn.cursor()
+
+    details = {}
+
+    try:
+        # ---- 在 Supabase 中建表 ----
+        new_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        new_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('todo', 'done')),
+                created_date TEXT NOT NULL,
+                completed_time TEXT,
+                due_date TEXT,
+                priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'completed')),
+                remind_days INTEGER,
+                last_reminded_date TEXT,
+                notes TEXT,
+                tags TEXT,
+                category TEXT
+            )
+        """)
+        new_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            )
+        """)
+        new_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_reminder (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                date TEXT NOT NULL,
+                reminded INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, date)
+            )
+        """)
+        new_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                UNIQUE(user_id, name)
+            )
+        """)
+        new_conn.commit()
+
+        # ---- 迁移 users ----
+        old_rows = _fetchall_any(old_cursor, old_type, "SELECT * FROM users ORDER BY id ASC")
+        user_id_map = {}  # old_id -> new_id
+        user_count = 0
+
+        for row in old_rows:
+            new_cursor.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id",
+                (row['username'], row['password_hash'], row.get('created_at', ''))
+            )
+            new_id = new_cursor.fetchone()[0]
+            user_id_map[row['id']] = new_id
+            user_count += 1
+
+        details['users'] = user_count
+
+        # ---- 迁移 categories ----
+        old_rows = _fetchall_any(old_cursor, old_type, "SELECT * FROM categories ORDER BY id ASC")
+        cat_count = 0
+        for row in old_rows:
+            new_uid = user_id_map.get(row['user_id'])
+            if new_uid:
+                try:
+                    new_cursor.execute(
+                        "INSERT INTO categories (user_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (new_uid, row['name'])
+                    )
+                    cat_count += 1
+                except Exception:
+                    pass
+        details['categories'] = cat_count
+
+        # ---- 迁移 tasks ----
+        old_rows = _fetchall_any(old_cursor, old_type, "SELECT * FROM tasks ORDER BY id ASC")
+        task_count = 0
+        for row in old_rows:
+            new_uid = user_id_map.get(row['user_id'])
+            if new_uid:
+                new_cursor.execute(
+                    """INSERT INTO tasks
+                    (user_id, content, type, created_date, completed_time, due_date,
+                     priority, status, remind_days, last_reminded_date, notes, tags, category)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (new_uid, row['content'], row['type'], row['created_date'],
+                     row.get('completed_time'), row.get('due_date'), row.get('priority', 2),
+                     row.get('status', 'pending'), row.get('remind_days'),
+                     row.get('last_reminded_date'), row.get('notes'), row.get('tags'),
+                     row.get('category'))
+                )
+                task_count += 1
+        details['tasks'] = task_count
+
+        # ---- 迁移 settings ----
+        old_rows = _fetchall_any(old_cursor, old_type, "SELECT * FROM settings")
+        set_count = 0
+        for row in old_rows:
+            new_uid = user_id_map.get(row['user_id'])
+            if new_uid:
+                try:
+                    new_cursor.execute(
+                        "INSERT INTO settings (user_id, key, value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (new_uid, row['key'], row['value'])
+                    )
+                    set_count += 1
+                except Exception:
+                    pass
+        details['settings'] = set_count
+
+        # ---- 迁移 daily_reminder ----
+        old_rows = _fetchall_any(old_cursor, old_type, "SELECT * FROM daily_reminder")
+        dr_count = 0
+        for row in old_rows:
+            new_uid = user_id_map.get(row['user_id'])
+            if new_uid:
+                try:
+                    new_cursor.execute(
+                        "INSERT INTO daily_reminder (user_id, date, reminded) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (new_uid, row['date'], row.get('reminded', 0))
+                    )
+                    dr_count += 1
+                except Exception:
+                    pass
+        details['daily_reminders'] = dr_count
+
+        new_conn.commit()
+
+        report = (f"迁移完成！\n"
+                  f"用户: {user_count} | 任务: {task_count} | "
+                  f"分类: {cat_count} | 设置: {set_count} | 提醒记录: {dr_count}")
+
+        return {'success': True, 'report': report, 'details': details}
+
+    except Exception as e:
+        new_conn.rollback()
+        return {'success': False, 'report': f'迁移失败: {str(e)}', 'details': details}
+    finally:
+        old_conn.close()
+        new_conn.close()
+
+
+def _fetchall_any(cursor, db_type, sql, params=None):
+    """通用查询多行，返回 list[dict]（不依赖全局 _db_type）"""
+    if params:
+        if db_type == 'postgresql':
+            sql = sql.replace('?', '%s')
+        cursor.execute(sql, params)
+    else:
+        if db_type == 'postgresql':
+            sql = sql.replace('?', '%s')
+        cursor.execute(sql)
+
+    rows = cursor.fetchall()
+    cols = [desc[0] for desc in cursor.description]
+    return [dict(zip(cols, row)) for row in rows]
