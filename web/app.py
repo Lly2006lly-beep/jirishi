@@ -31,6 +31,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'jirishi-dev-secret-key-change-in-production')
 
 # ---- 数据迁移：启动时若设了环境变量则自动迁移 ----
+print(f"[DEBUG] MIGRATE_TO_SUPABASE={repr(os.environ.get('MIGRATE_TO_SUPABASE'))}", flush=True)
 if os.environ.get('MIGRATE_TO_SUPABASE'):
     import sys
     supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:5432/postgres"
