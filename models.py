@@ -1,91 +1,202 @@
 # -*- coding: utf-8 -*-
 """
 今日事 Web - 数据库模型
-基于原桌面版 DatabaseManager 改造，增加多用户支持（user_id 关联）。
-所有 SQL 操作使用参数化查询，防止 SQL 注入。
+支持 SQLite（本地开发）和 PostgreSQL（Render 线上）。
+自动根据 DATABASE_URL 环境变量切换数据库类型。
 """
 
+import os
 import sqlite3
 from datetime import datetime, timedelta
 
+# 尝试导入 PostgreSQL 驱动
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAS_PSYCOPG2 = True
+except ImportError:
+    HAS_PSYCOPG2 = False
+
+_db_type = None  # 'sqlite' 或 'postgresql'
+
 
 def get_db():
-    """获取数据库连接（使用 row_factory 以便通过列名访问）"""
-    conn = sqlite3.connect('tasks.db')
-    conn.row_factory = sqlite3.Row
-    # 启用外键约束
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    """获取数据库连接，自动根据 DATABASE_URL 选择 SQLite 或 PostgreSQL"""
+    global _db_type
+    db_url = os.environ.get('DATABASE_URL')
 
+    if db_url and HAS_PSYCOPG2:
+        _db_type = 'postgresql'
+        conn = psycopg2.connect(db_url)
+        # psycopg2 返回普通元组，我们在查询时手动用列名
+        return conn
+    else:
+        _db_type = 'sqlite'
+        conn = sqlite3.connect('tasks.db')
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
+
+def _execute(cursor, sql, params=None):
+    """执行 SQL，自动转换占位符（SQLite 用 ?，PostgreSQL 用 %s）"""
+    if _db_type == 'postgresql':
+        sql = sql.replace('?', '%s')
+    if params:
+        cursor.execute(sql, params)
+    else:
+        cursor.execute(sql)
+
+
+def _fetchone(cursor, sql, params=None):
+    """查询单行，返回 dict"""
+    _execute(cursor, sql, params)
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if _db_type == 'postgresql':
+        cols = [desc[0] for desc in cursor.description]
+        return dict(zip(cols, row))
+    else:
+        return dict(row)
+
+
+def _fetchall(cursor, sql, params=None):
+    """查询多行，返回 list[dict]"""
+    _execute(cursor, sql, params)
+    rows = cursor.fetchall()
+    if _db_type == 'postgresql':
+        cols = [desc[0] for desc in cursor.description]
+        return [dict(zip(cols, row)) for row in rows]
+    else:
+        return [dict(row) for row in rows]
+
+
+def _now():
+    """返回当前日期时间字符串"""
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _today():
+    """返回当前日期字符串"""
+    return datetime.now().strftime('%Y-%m-%d')
+
+
+# ==================== 初始化数据库 ====================
 
 def init_db():
-    """初始化数据库：创建所有表和默认数据"""
+    """初始化数据库：创建所有表"""
     conn = get_db()
     cursor = conn.cursor()
 
-    # ==================== 用户表 ====================
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (DATETIME('now'))
-        )
-    """)
-
-    # ==================== 任务表（多用户：通过 user_id 关联） ====================
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('todo', 'done')),
-            created_date TEXT NOT NULL,
-            completed_time TEXT,
-            due_date TEXT,
-            priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
-            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'completed')),
-            remind_days INTEGER,
-            last_reminded_date TEXT,
-            notes TEXT,
-            tags TEXT,
-            category TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    """)
-
-    # ==================== 用户设置表 ====================
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            user_id INTEGER NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            PRIMARY KEY (user_id, key),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    """)
-
-    # ==================== 每日提醒表 ====================
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS daily_reminder (
-            user_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            reminded INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (user_id, date),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    """)
-
-    # ==================== 分类表 ====================
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            UNIQUE(user_id, name),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    """)
+    if _db_type == 'postgresql':
+        # PostgreSQL 建表语句
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('todo', 'done')),
+                created_date TEXT NOT NULL,
+                completed_time TEXT,
+                due_date TEXT,
+                priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'completed')),
+                remind_days INTEGER,
+                last_reminded_date TEXT,
+                notes TEXT,
+                tags TEXT,
+                category TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_reminder (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                date TEXT NOT NULL,
+                reminded INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, date)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                UNIQUE(user_id, name)
+            )
+        """)
+    else:
+        # SQLite 建表语句
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (DATETIME('now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('todo', 'done')),
+                created_date TEXT NOT NULL,
+                completed_time TEXT,
+                due_date TEXT,
+                priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'completed')),
+                remind_days INTEGER,
+                last_reminded_date TEXT,
+                notes TEXT,
+                tags TEXT,
+                category TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_reminder (
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                reminded INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, date),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                UNIQUE(user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
 
     conn.commit()
     conn.close()
@@ -94,84 +205,91 @@ def init_db():
 # ==================== 用户管理 ====================
 
 def create_user(username, password_hash):
-    """创建新用户，返回 (success, message)"""
+    """创建新用户"""
     conn = get_db()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username.strip(), password_hash)
+        now = _now()
+        _execute(cursor,
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username.strip(), password_hash, now)
         )
-        user_id = cursor.lastrowid
+        if _db_type == 'postgresql':
+            _execute(cursor, "SELECT LASTVAL()")
+            user_id = cursor.fetchone()[0]
+        else:
+            user_id = cursor.lastrowid
         conn.commit()
 
-        # 为新用户创建默认分类
+        # 默认分类
         for default_cat in ['工作', '学习', '生活']:
-            cursor.execute(
-                "INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)",
-                (user_id, default_cat)
+            _execute(cursor,
+                "INSERT INTO categories (user_id, name) SELECT ?, ? "
+                "WHERE NOT EXISTS (SELECT 1 FROM categories WHERE user_id = ? AND name = ?)",
+                (user_id, default_cat, user_id, default_cat)
             )
-        # 设置默认提醒天数
-        cursor.execute(
+        # 默认设置
+        _execute(cursor,
+            "INSERT INTO settings (user_id, key, value) VALUES (?, 'default_remind_days', '3') "
+            "ON CONFLICT (user_id, key) DO UPDATE SET value = '3'" if _db_type == 'postgresql' else
             "INSERT OR REPLACE INTO settings (user_id, key, value) VALUES (?, 'default_remind_days', '3')",
             (user_id,)
         )
         conn.commit()
         conn.close()
         return True, f"注册成功！欢迎，{username.strip()}"
-    except sqlite3.IntegrityError:
+    except Exception as e:
         conn.close()
-        return False, "用户名已存在，请换一个"
+        if 'UNIQUE' in str(e).upper() or 'unique' in str(e).lower():
+            return False, "用户名已存在，请换一个"
+        return False, f"注册失败：{e}"
 
 
 def get_user_by_username(username):
-    """根据用户名获取用户信息"""
+    """根据用户名获取用户"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username.strip(),))
-    user = cursor.fetchone()
-    conn.close()
-    return user
+    return _fetchone(cursor, "SELECT * FROM users WHERE username = ?", (username.strip(),))
 
 
 def get_user_by_id(user_id):
-    """根据用户 ID 获取用户信息"""
+    """根据 ID 获取用户"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
+    return _fetchone(cursor, "SELECT * FROM users WHERE id = ?", (user_id,))
 
 
-# ==================== 待办管理（多用户） ====================
+# ==================== 待办管理 ====================
 
 def add_todo(user_id, content, due_date=None, priority=2, remind_days=None, notes=None, tags=None, category=None):
-    """添加一条待办事项"""
+    """添加待办"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    today = _today()
+    _execute(cursor, """
         INSERT INTO tasks (user_id, content, type, created_date, due_date, priority, status, remind_days, notes, tags, category)
-        VALUES (?, ?, 'todo', DATE('now'), ?, ?, 'pending', ?, ?, ?, ?)
-    """, (user_id, content.strip(), due_date, priority, remind_days, notes, tags, category))
+        VALUES (?, ?, 'todo', ?, ?, ?, 'pending', ?, ?, ?, ?)
+    """, (user_id, content.strip(), today, due_date, priority, remind_days, notes, tags, category))
     conn.commit()
     conn.close()
 
 
 def add_done(user_id, content):
-    """直接添加一条已完成的工作记录"""
+    """添加已完成记录"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    today = _today()
+    now = _now()
+    _execute(cursor, """
         INSERT INTO tasks (user_id, content, type, created_date, completed_time, status)
-        VALUES (?, ?, 'done', DATE('now'), DATETIME('now'), 'completed')
-    """, (user_id, content.strip()))
+        VALUES (?, ?, 'done', ?, ?, 'completed')
+    """, (user_id, content.strip(), today, now))
     conn.commit()
     conn.close()
 
 
 def get_todos(user_id, tag_filter=None, category_filter=None):
-    """获取用户的所有待办事项"""
+    """获取待办列表"""
     conn = get_db()
     cursor = conn.cursor()
     conditions = ["user_id = ?", "type = 'todo'", "status = 'pending'"]
@@ -185,23 +303,23 @@ def get_todos(user_id, tag_filter=None, category_filter=None):
         conditions.append("category = ?")
         params.append(category_filter)
 
-    where_clause = " AND ".join(conditions)
-    cursor.execute(f"""
-        SELECT id, content, due_date, priority, created_date, remind_days, notes, tags, category
-        FROM tasks WHERE {where_clause}
-        ORDER BY priority ASC, created_date ASC
-    """, params)
-    todos = cursor.fetchall()
+    where = " AND ".join(conditions)
+    result = _fetchall(cursor,
+        f"SELECT id, content, due_date, priority, created_date, remind_days, notes, tags, category "
+        f"FROM tasks WHERE {where} ORDER BY priority ASC, created_date ASC",
+        params
+    )
     conn.close()
-    return todos
+    return result
 
 
 def get_today_done(user_id, tag_filter=None, category_filter=None):
-    """获取用户今日已完成的工作"""
+    """获取今日完成"""
     conn = get_db()
     cursor = conn.cursor()
-    conditions = ["user_id = ?", "type = 'done'", "created_date = DATE('now')"]
-    params = [user_id]
+    today = _today()
+    conditions = ["user_id = ?", "type = 'done'", "created_date = ?"]
+    params = [user_id, today]
 
     if tag_filter:
         conditions.append("(tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?)")
@@ -211,50 +329,50 @@ def get_today_done(user_id, tag_filter=None, category_filter=None):
         conditions.append("category = ?")
         params.append(category_filter)
 
-    where_clause = " AND ".join(conditions)
-    cursor.execute(f"""
-        SELECT id, content, completed_time, notes, tags, category
-        FROM tasks WHERE {where_clause}
-        ORDER BY completed_time ASC
-    """, params)
-    done_items = cursor.fetchall()
+    where = " AND ".join(conditions)
+    result = _fetchall(cursor,
+        f"SELECT id, content, completed_time, notes, tags, category "
+        f"FROM tasks WHERE {where} ORDER BY completed_time ASC",
+        params
+    )
     conn.close()
-    return done_items
+    return result
 
 
 def get_history_done(user_id):
-    """获取用户历史完成记录（今天之前）"""
+    """获取历史完成（今天之前）"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    today = _today()
+    result = _fetchall(cursor, """
         SELECT id, content, completed_time, created_date, notes, tags, category
-        FROM tasks
-        WHERE user_id = ? AND type = 'done' AND created_date < DATE('now')
+        FROM tasks WHERE user_id = ? AND type = 'done' AND created_date < ?
         ORDER BY created_date DESC, completed_time DESC
-    """, (user_id,))
-    items = cursor.fetchall()
+    """, (user_id, today))
     conn.close()
-    return items
+    return result
 
 
 def mark_as_done(user_id, todo_id):
-    """将待办标记为已完成（更新 created_date 为今天，使其出现在今日完成栏）"""
+    """标记为完成"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    today = _today()
+    now = _now()
+    _execute(cursor, """
         UPDATE tasks SET type = 'done', status = 'completed',
-        completed_time = DATETIME('now'), created_date = DATE('now')
+        completed_time = ?, created_date = ?
         WHERE id = ? AND user_id = ?
-    """, (todo_id, user_id))
+    """, (now, today, todo_id, user_id))
     conn.commit()
     conn.close()
 
 
 def revert_to_todo(user_id, done_id):
-    """将已完成的工作改回待办"""
+    """改回待办"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    _execute(cursor, """
         UPDATE tasks SET type = 'todo', status = 'pending', completed_time = NULL
         WHERE id = ? AND user_id = ?
     """, (done_id, user_id))
@@ -266,14 +384,14 @@ def delete_task(user_id, task_id):
     """删除任务"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
+    _execute(cursor, "DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
     conn.commit()
     conn.close()
 
 
 def update_task(user_id, task_id, content=None, due_date=None, priority=None,
                 remind_days=None, notes=None, tags=None, category=None):
-    """更新任务信息（只更新提供的字段）"""
+    """更新任务"""
     conn = get_db()
     cursor = conn.cursor()
     fields = []
@@ -303,76 +421,77 @@ def update_task(user_id, task_id, content=None, due_date=None, priority=None,
 
     if fields:
         params.extend([task_id, user_id])
-        cursor.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id = ? AND user_id = ?", params)
+        _execute(cursor, f"UPDATE tasks SET {', '.join(fields)} WHERE id = ? AND user_id = ?", params)
         conn.commit()
 
     conn.close()
 
 
 def clear_today_done(user_id):
-    """清空用户今日完成的所有工作"""
+    """清空今日完成"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM tasks WHERE user_id = ? AND type = 'done' AND created_date = DATE('now')", (user_id,))
+    today = _today()
+    _execute(cursor, "DELETE FROM tasks WHERE user_id = ? AND type = 'done' AND created_date = ?", (user_id, today))
     conn.commit()
     conn.close()
 
 
-# ==================== 统计与汇总 ====================
+# ==================== 统计 ====================
 
 def get_stats(user_id, tag_filter=None, category_filter=None):
-    """获取用户统计信息"""
+    """获取统计"""
     conn = get_db()
     cursor = conn.cursor()
+    today = _today()
 
-    def build_query(base_condition):
-        conditions = ["user_id = ?", base_condition]
+    def build(base):
+        conds = ["user_id = ?", base]
         params = [user_id]
         if tag_filter:
-            conditions.append("(tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?)")
+            conds.append("(tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?)")
             params.extend([tag_filter, tag_filter + ',%', '%,' + tag_filter, '%,' + tag_filter + ',%'])
         if category_filter:
-            conditions.append("category = ?")
+            conds.append("category = ?")
             params.append(category_filter)
-        return " AND ".join(conditions), params
+        return " AND ".join(conds), params
 
-    where_done, done_params = build_query("type = 'done' AND created_date = DATE('now')")
-    cursor.execute(f"SELECT COUNT(*) as count FROM tasks WHERE {where_done}", done_params)
-    done_count = cursor.fetchone()['count']
+    w1, p1 = build(f"type = 'done' AND created_date = ?")
+    p1.append(today)
+    row = _fetchone(cursor, f"SELECT COUNT(*) as count FROM tasks WHERE {w1}", p1)
+    done_count = row['count'] if row else 0
 
-    where_todo, todo_params = build_query("type = 'todo' AND status = 'pending'")
-    cursor.execute(f"SELECT COUNT(*) as count FROM tasks WHERE {where_todo}", todo_params)
-    todo_count = cursor.fetchone()['count']
+    w2, p2 = build("type = 'todo' AND status = 'pending'")
+    row = _fetchone(cursor, f"SELECT COUNT(*) as count FROM tasks WHERE {w2}", p2)
+    todo_count = row['count'] if row else 0
 
     conn.close()
     return {'done': done_count, 'todo': todo_count}
 
 
 def get_today_summary(user_id):
-    """获取用户今日小结"""
+    """今日小结"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
+    today = _today()
+    rows = _fetchall(cursor, """
         SELECT content, completed_time FROM tasks
-        WHERE user_id = ? AND type = 'done' AND created_date = DATE('now')
+        WHERE user_id = ? AND type = 'done' AND created_date = ?
         ORDER BY completed_time ASC
-    """, (user_id,))
-    done_items = cursor.fetchall()
+    """, (user_id, today))
     conn.close()
 
-    if not done_items:
+    if not rows:
         return None
-
-    today_date = datetime.now().strftime('%Y-%m-%d')
     return {
-        'date': today_date,
-        'items': [item['content'] for item in done_items],
-        'count': len(done_items)
+        'date': today,
+        'items': [r['content'] for r in rows],
+        'count': len(rows)
     }
 
 
 def get_weekly_stats(user_id):
-    """获取用户本周每天的完成统计"""
+    """本周统计"""
     today = datetime.now()
     monday = today - timedelta(days=today.weekday())
     weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
@@ -383,24 +502,25 @@ def get_weekly_stats(user_id):
     for i in range(7):
         date_obj = monday + timedelta(days=i)
         date_str = date_obj.strftime('%Y-%m-%d')
-        cursor.execute(
+        row = _fetchone(cursor,
             "SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND type = 'done' AND created_date = ?",
             (user_id, date_str)
         )
-        count = cursor.fetchone()['count']
+        count = row['count'] if row else 0
         result.append({'date': date_str, 'weekday': weekdays[i], 'count': count})
     conn.close()
     return result
 
 
-# ==================== 标签管理 ====================
+# ==================== 标签 ====================
 
 def get_all_tags(user_id):
-    """获取用户所有标签"""
+    """获取所有标签"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT tags FROM tasks WHERE user_id = ? AND tags IS NOT NULL AND tags != ''", (user_id,))
-    rows = cursor.fetchall()
+    rows = _fetchall(cursor,
+        "SELECT DISTINCT tags FROM tasks WHERE user_id = ? AND tags IS NOT NULL AND tags != ''",
+        (user_id,))
     conn.close()
 
     all_tags = set()
@@ -413,28 +533,29 @@ def get_all_tags(user_id):
     return sorted(list(all_tags))
 
 
-# ==================== 分类管理 ====================
+# ==================== 分类 ====================
 
 def get_all_categories(user_id):
-    """获取用户所有分类"""
+    """获取所有分类"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT name FROM categories WHERE user_id = ? ORDER BY id ASC", (user_id,))
-    rows = cursor.fetchall()
+    rows = _fetchall(cursor,
+        "SELECT name FROM categories WHERE user_id = ? ORDER BY id ASC",
+        (user_id,))
     conn.close()
-    return [row['name'] for row in rows]
+    return [r['name'] for r in rows]
 
 
 def add_category(user_id, name):
-    """添加分类，返回 (success, message)"""
+    """添加分类"""
     conn = get_db()
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO categories (user_id, name) VALUES (?, ?)", (user_id, name.strip()))
+        _execute(cursor, "INSERT INTO categories (user_id, name) VALUES (?, ?)", (user_id, name.strip()))
         conn.commit()
         conn.close()
         return True, f"分类「{name.strip()}」已添加"
-    except sqlite3.IntegrityError:
+    except Exception:
         conn.close()
         return False, f"分类「{name.strip()}」已存在"
 
@@ -443,82 +564,95 @@ def delete_category(user_id, name):
     """删除分类"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("UPDATE tasks SET category = NULL WHERE user_id = ? AND category = ?", (user_id, name))
-    cursor.execute("DELETE FROM categories WHERE user_id = ? AND name = ?", (user_id, name))
+    _execute(cursor, "UPDATE tasks SET category = NULL WHERE user_id = ? AND category = ?", (user_id, name))
+    _execute(cursor, "DELETE FROM categories WHERE user_id = ? AND name = ?", (user_id, name))
     conn.commit()
     conn.close()
 
 
 def rename_category(user_id, old_name, new_name):
-    """重命名分类，返回 (success, message)"""
+    """重命名分类"""
     conn = get_db()
     cursor = conn.cursor()
     try:
-        cursor.execute("UPDATE tasks SET category = ? WHERE user_id = ? AND category = ?",
-                       (new_name.strip(), user_id, old_name))
-        cursor.execute("UPDATE categories SET name = ? WHERE user_id = ? AND name = ?",
-                       (new_name.strip(), user_id, old_name))
+        _execute(cursor, "UPDATE tasks SET category = ? WHERE user_id = ? AND category = ?",
+                 (new_name.strip(), user_id, old_name))
+        _execute(cursor, "UPDATE categories SET name = ? WHERE user_id = ? AND name = ?",
+                 (new_name.strip(), user_id, old_name))
         conn.commit()
         conn.close()
         return True, f"分类已重命名为「{new_name.strip()}」"
-    except sqlite3.IntegrityError:
+    except Exception:
         conn.close()
         return False, f"分类「{new_name.strip()}」已存在"
 
 
-# ==================== 设置管理 ====================
+# ==================== 设置 ====================
 
 def get_setting(user_id, key, default=None):
-    """获取用户设置"""
+    """获取设置"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE user_id = ? AND key = ?", (user_id, key))
-    result = cursor.fetchone()
+    row = _fetchone(cursor, "SELECT value FROM settings WHERE user_id = ? AND key = ?", (user_id, key))
     conn.close()
-    return result['value'] if result else default
+    return row['value'] if row else default
 
 
 def save_setting(user_id, key, value):
-    """保存用户设置"""
+    """保存设置"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (user_id, key, value) VALUES (?, ?, ?)",
-                   (user_id, key, str(value)))
+    if _db_type == 'postgresql':
+        _execute(cursor,
+            "INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?) "
+            "ON CONFLICT (user_id, key) DO UPDATE SET value = ?",
+            (user_id, key, str(value), str(value)))
+    else:
+        _execute(cursor,
+            "INSERT OR REPLACE INTO settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, key, str(value)))
     conn.commit()
     conn.close()
 
 
-# ==================== 提醒功能 ====================
+# ==================== 提醒 ====================
 
 def get_reminder_tasks(user_id):
-    """获取需要提醒的待办任务（即将到期）"""
+    """获取需提醒的任务"""
     conn = get_db()
     cursor = conn.cursor()
 
-    # 获取默认提醒天数
-    cursor.execute("SELECT value FROM settings WHERE user_id = ? AND key = 'default_remind_days'", (user_id,))
-    result = cursor.fetchone()
-    default_days = int(result['value']) if result else 3
+    default_days = 3
+    row = _fetchone(cursor,
+        "SELECT value FROM settings WHERE user_id = ? AND key = 'default_remind_days'",
+        (user_id,))
+    if row:
+        default_days = int(row['value'])
 
-    cursor.execute("""
-        SELECT id, content, due_date, remind_days, last_reminded_date,
-               CAST(julianday(due_date) - julianday('now') AS INTEGER) as days_left
-        FROM tasks
-        WHERE user_id = ? AND type = 'todo' AND status = 'pending' AND due_date IS NOT NULL
+    rows = _fetchall(cursor, """
+        SELECT id, content, due_date, remind_days, last_reminded_date
+        FROM tasks WHERE user_id = ? AND type = 'todo' AND status = 'pending' AND due_date IS NOT NULL
     """, (user_id,))
-    tasks = cursor.fetchall()
     conn.close()
 
     reminder_tasks = []
     today = datetime.now().strftime('%Y-%m-%d')
-    for task in tasks:
+    for task in rows:
         actual_remind_days = task['remind_days'] if task['remind_days'] is not None else default_days
         if actual_remind_days <= 0:
             continue
-        days_left = task['days_left']
-        if days_left is not None and days_left <= actual_remind_days:
+        if task['due_date'] and task['due_date'] != 'None':
+            try:
+                due = datetime.strptime(task['due_date'], '%Y-%m-%d')
+                days_left = (due - datetime.now()).days
+            except:
+                continue
+        else:
+            continue
+
+        if days_left <= actual_remind_days:
             last_reminded = task['last_reminded_date']
-            if last_reminded != today:
+            if last_reminded != today and last_reminded != 'None':
                 reminder_tasks.append({
                     'id': task['id'],
                     'content': task['content'],
@@ -529,12 +663,12 @@ def get_reminder_tasks(user_id):
 
 
 def mark_reminded(user_id, task_ids):
-    """标记任务已提醒"""
+    """标记已提醒"""
     conn = get_db()
     cursor = conn.cursor()
     today = datetime.now().strftime('%Y-%m-%d')
-    for task_id in task_ids:
-        cursor.execute("UPDATE tasks SET last_reminded_date = ? WHERE id = ? AND user_id = ?",
-                       (today, task_id, user_id))
+    for tid in task_ids:
+        _execute(cursor, "UPDATE tasks SET last_reminded_date = ? WHERE id = ? AND user_id = ?",
+                 (today, tid, user_id))
     conn.commit()
     conn.close()
