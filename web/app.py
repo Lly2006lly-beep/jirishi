@@ -30,6 +30,14 @@ models.init_db()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'jirishi-dev-secret-key-change-in-production')
 
+# ---- 数据迁移：启动时若设了环境变量则自动迁移 ----
+if os.environ.get('MIGRATE_TO_SUPABASE'):
+    import sys
+    supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:5432/postgres"
+    result = models.migrate_to_supabase(supabase_url)
+    print(f"\n{'='*60}\n迁移结果: {result}\n{'='*60}\n", flush=True)
+    sys.stdout.flush()
+
 # ==================== Flask-Login 初始化 ====================
 
 login_manager = LoginManager()
