@@ -524,6 +524,17 @@ def migrate_to_supabase_route():
         return jsonify({'success': False, 'error': str(e), 'traceback': _tb.format_exc()}), 500
 
 
+@app.route('/admin/export-data')
+def export_data():
+    """导出全部数据为JSON，用于本地迁移"""
+    try:
+        data = models.export_all_data()
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        import traceback as _tb2
+        return jsonify({'success': False, 'error': str(e), 'traceback': _tb2.format_exc()}), 500
+
+
 # ==================== 启动应用 ====================
 
 if __name__ == '__main__':
