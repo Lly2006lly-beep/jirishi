@@ -865,21 +865,24 @@ def _fetchall_any(cursor, db_type, sql, params=None):
 # ==================== 数据导出 ====================
 
 def export_all_data():
-    """导出所有表的数据为dict，用于迁移"""
+    """导出所有表的数据为dict，用于迁移（原生查询版本）"""
     conn = get_db()
     cursor = conn.cursor()
     result = {}
+    counts = {}
 
-    def _fetch_table(table, order='id'):
-        rows = _fetchall_any(cursor, _db_type, f"SELECT * FROM {table}")
-        result[table] = rows
-        return len(rows)
-
-    _fetch_table('users')
-    _fetch_table('categories')
-    _fetch_table('tasks')
-    _fetch_table('settings')
-    _fetch_table('daily_reminder')
+    for table in ['users', 'categories', 'tasks', 'settings', 'daily_reminder']:
+        try:
+            cursor.execute(f"SELECT * FROM {table}")
+            cols = [desc[0] for desc in cursor.description]
+            rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+            result[table] = rows
+            counts[table] = len(rows)
+        except Exception as e:
+            result[table] = []
+            counts[table] = f"ERROR: {e}"
 
     conn.close()
+    result['_counts'] = counts
+    result['_db_type'] = _db_type
     return result
