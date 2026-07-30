@@ -861,3 +861,25 @@ def _fetchall_any(cursor, db_type, sql, params=None):
     rows = cursor.fetchall()
     cols = [desc[0] for desc in cursor.description]
     return [dict(zip(cols, row)) for row in rows]
+
+# ==================== 数据导出 ====================
+
+def export_all_data():
+    """导出所有表的数据为dict，用于迁移"""
+    conn = get_db()
+    cursor = conn.cursor()
+    result = {}
+
+    def _fetch_table(table, order='id'):
+        rows = _fetchall_any(cursor, _db_type, f"SELECT * FROM {table}")
+        result[table] = rows
+        return len(rows)
+
+    _fetch_table('users')
+    _fetch_table('categories')
+    _fetch_table('tasks')
+    _fetch_table('settings')
+    _fetch_table('daily_reminder')
+
+    conn.close()
+    return result
