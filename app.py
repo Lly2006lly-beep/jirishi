@@ -31,12 +31,15 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'jirishi-dev-secret-key-change-in-production')
 
 # ---- 数据迁移：启动时若设了环境变量则自动迁移 ----
-import sys as _sys
+import sys as _sys, traceback as _tb
 print(f"[DEBUG] MIGRATE_TO_SUPABASE={repr(os.environ.get('MIGRATE_TO_SUPABASE'))}", flush=True)
 if os.environ.get('MIGRATE_TO_SUPABASE'):
-    supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:5432/postgres"
-    result = models.migrate_to_supabase(supabase_url)
-    print(f"\n{'='*60}\n迁移结果: {result}\n{'='*60}\n", flush=True)
+    try:
+        supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:6543/postgres?sslmode=require&connect_timeout=10"
+        result = models.migrate_to_supabase(supabase_url)
+        print(f"\n{'='*60}\n[迁移成功] {result}\n{'='*60}\n", flush=True)
+    except Exception as _e:
+        print(f"\n{'='*60}\n[迁移失败-不阻塞启动]\n{_tb.format_exc()}\n{'='*60}\n", flush=True)
     _sys.stdout.flush()
 
 # ==================== Flask-Login 初始化 ====================
@@ -512,7 +515,7 @@ def history_page():
 @app.route('/admin/migrate-to-supabase')
 def migrate_to_supabase_route():
     """将当前数据库数据迁移到 Supabase PostgreSQL"""
-    supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:5432/postgres"
+    supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:6543/postgres?sslmode=require&connect_timeout=10"
     result = models.migrate_to_supabase(supabase_url)
     return jsonify(result)
 
