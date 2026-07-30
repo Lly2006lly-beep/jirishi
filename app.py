@@ -515,9 +515,13 @@ def history_page():
 @app.route('/admin/migrate-to-supabase')
 def migrate_to_supabase_route():
     """将当前数据库数据迁移到 Supabase PostgreSQL"""
-    supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:6543/postgres?sslmode=require&connect_timeout=10"
-    result = models.migrate_to_supabase(supabase_url)
-    return jsonify(result)
+    import traceback as _tb
+    try:
+        supabase_url = "postgresql://postgres:JQT1MTDNUVjDCOzb@db.mvqeyksjhqtxjithujlh.supabase.co:6543/postgres?sslmode=require&connect_timeout=10"
+        result = models.migrate_to_supabase(supabase_url)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'traceback': _tb.format_exc()}), 500
 
 
 # ==================== 启动应用 ====================
